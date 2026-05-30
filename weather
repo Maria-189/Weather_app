@@ -4,7 +4,7 @@ import requests
 
 URL_BASE = "https://api.ptdata.org"
 URL = URL_BASE + "/v1/geo/districts"
-FICHEIRO_JSON = "meteriologia_30Maio2026.json"
+FICHEIRO_JSON = "distrito_30Maio2026.json"
 
 class GestorCidades:
     def __init__(self, nome_arquivo: str = FICHEIRO_JSON):
@@ -31,7 +31,7 @@ class GestorCidades:
 
     def gravar_distritos(self, distritos: list):
         self.__escrever_arquivo(distritos)
-        print(f"\033[92m[OK] Gravados {len(distritos)} distritos em: {os.path.abspath(self.__nome_arquivo)}\033[00m")
+        print(f"\033[92m[OK] Gravados {len(distritos)} registos em: {os.path.abspath(self.__nome_arquivo)}\033[00m")
 
 
 def obter_distritos_reduzidos(url: str = URL):
@@ -62,10 +62,79 @@ def obter_distritos_reduzidos(url: str = URL):
     return reduzidos
 
 
+def obter_municipios_por_distrito():
+    url = URL_BASE + "/v1/geo/municipalities"
+
+    try:
+        resposta = requests.get(url)
+        resposta.raise_for_status()
+    except requests.RequestException as e:
+        print(f"\033[91m[ERRO] Falha na requisição de municípios: {e}\033[00m")
+        return None
+
+    try:
+        dados = resposta.json()
+    except ValueError:
+        print("\033[91m[ERRO] Resposta de municípios não é JSON válido.\033[00m")
+        return None
+
+    lista = dados.get("data", {}).get("municipalities")
+    if lista is None:
+        print("\033[91m[ERRO] Estrutura inesperada: 'data.municipalities' não encontrada.\033[00m")
+        return None
+
+    agrupado = {}
+
+    for item in lista:
+        code = item.get("code")
+        name = item.get("name")
+        district = item.get("district_code")
+
+        if code and name and district:
+            if district not in agrupado:
+                agrupado[district] = []
+            agrupado[district].append({
+                "code": code,
+                "name": name
+            })
+
+    return agrupado
+
+
+# ⭐ NOVA FUNÇÃO — CRIAR JSON SÓ DE MUNICÍPIOS
+def gravar_municipios_separado(municipios: dict, nome_arquivo="municipios_30Maio2026.json"):
+    lista_final = []
+
+    for dist_code, lista in municipios.items():
+        for m in lista:
+            lista_final.append({
+                "district_code": dist_code,
+                "code": m["code"],
+                "name": m["name"]
+            })
+
+    with open(nome_arquivo, "w", encoding="utf-8") as f:
+        json.dump(lista_final, f, indent=4, ensure_ascii=False)
+
+    print(f"\033[92m[OK] Gravados {len(lista_final)} municípios em: {os.path.abspath(nome_arquivo)}\033[00m")
+
+
+# MAIN FINAL — DISTRITOS + MUNICÍPIOS + JSON SEPARADO
 if __name__ == "__main__":
     gestor = GestorCidades()
+
     distritos = obter_distritos_reduzidos()
-    if distritos is not None:
-        for d in distritos:
-            print(f"{d['code']} - {d['name']}")
-        gestor.gravar_distritos(distritos)
+    municipios_por_distrito = obter_municipios_por_distrito()
+
+    # Criar JSON só de municípios
+    if municipios_por_distrito is not None:
+        gravar_municipios_separado(municipios_por_distrito)
+
+    # Inserir municípios dentro dos distritos
+    distritos_com_municipios = []
+    for d in distritos:
+        codigo = d["code"]
+        d["municipios"] = municipios_por_distrito.get(codigo, [])
+        distritos_com_municipios.append(d)
+
+    gestor.gravar_distritos(distritos_com_municipios)
