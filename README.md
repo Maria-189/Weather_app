@@ -1,1 +1,32 @@
 # Weather_app
+import json
+import os
+
+class GestorEstruturaJSON:
+    def __init__(self, nome_arquivo: str = "meteriologia_30Maio2026.json"):
+        self.nome_arquivo = nome_arquivo
+        caminho_absoluto = os.path.abspath(self.nome_arquivo)
+        print(f"[DEBUG] A procurar ficheiro em: {caminho_absoluto}")
+
+  try:
+            Mostrar mensagem apenas quando o ficheiro NÃO existir
+            if not os.path.exists(self.nome_arquivo):
+                print("\033[91m[AVISO] O ficheiro não existe.\033[00m")
+                # Criar ficheiro inicial com lista vazia
+                self._escrever_arquivo([])
+                print(f"\033[93m[INFO] Ficheiro JSON inicializado em: {caminho_absoluto}\033[00m")
+    else:
+                print(f"\033[92m[OK] Ficheiro encontrado: {caminho_absoluto}\033[00m")
+        except OSError as e:
+            print(f"\033[91m[ERRO] Problema ao aceder ao ficheiro: {e}\033[00m")
+
+  def _escrever_arquivo(self, dados: list):
+        try:
+            with open(self.nome_arquivo, "w", encoding="utf-8") as f:
+                json.dump(dados, f, indent=4, ensure_ascii=False)
+        except OSError as e:
+            print(f"\033[91m[ERRO] Não foi possível escrever o ficheiro: {e}\033[00m")
+
+
+if __name__ == "__main__":
+    GestorEstruturaJSON()
