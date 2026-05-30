@@ -6,34 +6,32 @@ URL_BASE = "https://api.ptdata.org"
 URL = URL_BASE + "/v1/geo/districts"
 FICHEIRO_JSON = "meteriologia_30Maio2026.json"
 
-class GestorEstruturaJSON:
+class GestorCidades:
     def __init__(self, nome_arquivo: str = FICHEIRO_JSON):
-        self.nome_arquivo = nome_arquivo
-        caminho_absoluto = os.path.abspath(self.nome_arquivo)
+        self.__nome_arquivo = nome_arquivo
+        caminho_absoluto = os.path.abspath(self.__nome_arquivo)
         print(f"[DEBUG] A procurar ficheiro em: {caminho_absoluto}")
 
         try:
-            if not os.path.exists(self.nome_arquivo):
+            if not os.path.exists(self.__nome_arquivo):
                 print("\033[91m[AVISO] O ficheiro não existe.\033[00m")
-                # Inicializa com lista vazia (array top-level)
-                self._escrever_arquivo([])
+                self.__escrever_arquivo([])
                 print(f"\033[93m[INFO] Ficheiro JSON inicializado em: {caminho_absoluto}\033[00m")
             else:
                 print(f"\033[92m[OK] Ficheiro encontrado: {caminho_absoluto}\033[00m")
         except OSError as e:
             print(f"\033[91m[ERRO] Problema ao aceder ao ficheiro: {e}\033[00m")
 
-    def _escrever_arquivo(self, dados):
+    def __escrever_arquivo(self, dados):
         try:
-            with open(self.nome_arquivo, "w", encoding="utf-8") as f:
+            with open(self.__nome_arquivo, "w", encoding="utf-8") as f:
                 json.dump(dados, f, indent=4, ensure_ascii=False)
         except OSError as e:
             print(f"\033[91m[ERRO] Não foi possível escrever o ficheiro: {e}\033[00m")
 
     def gravar_distritos(self, distritos: list):
-        # Grava a lista diretamente como array top-level
-        self._escrever_arquivo(distritos)
-        print(f"\033[92m[OK] Gravados {len(distritos)} distritos em: {os.path.abspath(self.nome_arquivo)}\033[00m")
+        self.__escrever_arquivo(distritos)
+        print(f"\033[92m[OK] Gravados {len(distritos)} distritos em: {os.path.abspath(self.__nome_arquivo)}\033[00m")
 
 
 def obter_distritos_reduzidos(url: str = URL):
@@ -65,7 +63,7 @@ def obter_distritos_reduzidos(url: str = URL):
 
 
 if __name__ == "__main__":
-    gestor = GestorEstruturaJSON()
+    gestor = GestorCidades()
     distritos = obter_distritos_reduzidos()
     if distritos is not None:
         for d in distritos:
