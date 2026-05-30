@@ -1,0 +1,4 @@
+distritos - públicos
+municipalidades - públicos
+tempo - privado
+Região administrativa - classe mãe(provisório)
