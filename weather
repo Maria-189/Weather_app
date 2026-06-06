@@ -5,61 +5,57 @@ import requests
 URL_BASE = "https://api.ptdata.org"
 URL = URL_BASE + "/v1/geo/districts"
 FICHEIRO_JSON = "distrito_30Maio2026.json"
+FICHEIRO_MUN = "municipios_30Maio2026.json"
 
 class GestorCidades:
     def __init__(self, nome_arquivo: str = FICHEIRO_JSON):
         self.__nome_arquivo = nome_arquivo
         caminho_absoluto = os.path.abspath(self.__nome_arquivo)
+
         print(f"[DEBUG] A procurar ficheiro em: {caminho_absoluto}")
 
+        if not os.path.exists(self.__nome_arquivo):
+            print("\033[91m[AVISO] O ficheiro não existe.\033[00m")
+            self.__escrever_arquivo([])
+            print("\033[93m[INFO] Ficheiro JSON criado e inicializado.\033[00m")
+        else:
+            print("\033[92m[OK] Ficheiro encontrado.\033[00m")
+
+    def __ler_arquivo(self):
+        if not os.path.exists(self.__nome_arquivo):
+            return None
         try:
-            if not os.path.exists(self.__nome_arquivo):
-                print("\033[91m[AVISO] O ficheiro não existe.\033[00m")
-                self.__escrever_arquivo([])
-                print(f"\033[93m[INFO] Ficheiro JSON inicializado em: {caminho_absoluto}\033[00m")
-            else:
-                print(f"\033[92m[OK] Ficheiro encontrado: {caminho_absoluto}\033[00m")
-        except OSError as e:
-            print(f"\033[91m[ERRO] Problema ao aceder ao ficheiro: {e}\033[00m")
+            with open(self.__nome_arquivo, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return None
 
     def __escrever_arquivo(self, dados):
-        try:
-            with open(self.__nome_arquivo, "w", encoding="utf-8") as f:
-                json.dump(dados, f, indent=4, ensure_ascii=False)
-        except OSError as e:
-            print(f"\033[91m[ERRO] Não foi possível escrever o ficheiro: {e}\033[00m")
+        with open(self.__nome_arquivo, "w", encoding="utf-8") as f:
+            json.dump(dados, f, indent=4, ensure_ascii=False)
 
     def gravar_distritos(self, distritos: list):
-        self.__escrever_arquivo(distritos)
-        print(f"\033[92m[OK] Gravados {len(distritos)} registos em: {os.path.abspath(self.__nome_arquivo)}\033[00m")
+        conteudo_antigo = self.__ler_arquivo()
+
+        if conteudo_antigo == distritos:
+            print("\033[93m[INFO] O ficheiro já estava atualizado. Nada foi alterado.\033[00m")
+        else:
+            self.__escrever_arquivo(distritos)
+            print("\033[92m[OK] Ficheiro atualizado com novos dados.\033[00m")
 
 
 def obter_distritos_reduzidos(url: str = URL):
     try:
-        resposta = requests.get(url, params={})
+        resposta = requests.get(url)
         resposta.raise_for_status()
-    except requests.RequestException as e:
-        print(f"\033[91m[ERRO] Falha na requisição: {e}\033[00m")
+    except:
+        print("\033[91m[ERRO] Falha ao obter distritos.\033[00m")
         return None
 
-    try:
-        dados = resposta.json()
-    except ValueError:
-        print("\033[91m[ERRO] Resposta não é JSON válido.\033[00m")
-        return None
+    dados = resposta.json()
+    lista = dados.get("data", {}).get("districts", [])
 
-    lista = dados.get("data", {}).get("districts")
-    if lista is None:
-        print("\033[91m[ERRO] Estrutura inesperada: 'data.districts' não encontrada.\033[00m")
-        return None
-
-    reduzidos = []
-    for item in lista:
-        code = item.get("code")
-        name = item.get("name")
-        if code is not None and name is not None:
-            reduzidos.append({"code": code, "name": name})
-    return reduzidos
+    return [{"code": d["code"], "name": d["name"]} for d in lista]
 
 
 def obter_municipios_por_distrito():
@@ -68,41 +64,27 @@ def obter_municipios_por_distrito():
     try:
         resposta = requests.get(url)
         resposta.raise_for_status()
-    except requests.RequestException as e:
-        print(f"\033[91m[ERRO] Falha na requisição de municípios: {e}\033[00m")
+    except:
+        print("\033[91m[ERRO] Falha ao obter municípios.\033[00m")
         return None
 
-    try:
-        dados = resposta.json()
-    except ValueError:
-        print("\033[91m[ERRO] Resposta de municípios não é JSON válido.\033[00m")
-        return None
-
-    lista = dados.get("data", {}).get("municipalities")
-    if lista is None:
-        print("\033[91m[ERRO] Estrutura inesperada: 'data.municipalities' não encontrada.\033[00m")
-        return None
+    dados = resposta.json()
+    lista = dados.get("data", {}).get("municipalities", [])
 
     agrupado = {}
-
     for item in lista:
-        code = item.get("code")
-        name = item.get("name")
-        district = item.get("district_code")
-
-        if code and name and district:
-            if district not in agrupado:
-                agrupado[district] = []
-            agrupado[district].append({
-                "code": code,
-                "name": name
-            })
+        dist = item["district_code"]
+        if dist not in agrupado:
+            agrupado[dist] = []
+        agrupado[dist].append({
+            "code": item["code"],
+            "name": item["name"]
+        })
 
     return agrupado
 
 
-# ⭐ NOVA FUNÇÃO — CRIAR JSON SÓ DE MUNICÍPIOS
-def gravar_municipios_separado(municipios: dict, nome_arquivo="municipios_30Maio2026.json"):
+def gravar_municipios_separado(municipios: dict, nome_arquivo=FICHEIRO_MUN):
     lista_final = []
 
     for dist_code, lista in municipios.items():
@@ -113,13 +95,21 @@ def gravar_municipios_separado(municipios: dict, nome_arquivo="municipios_30Maio
                 "name": m["name"]
             })
 
+    # Verificar se já existe e se está igual
+    if os.path.exists(nome_arquivo):
+        with open(nome_arquivo, "r", encoding="utf-8") as f:
+            antigo = json.load(f)
+        if antigo == lista_final:
+            print("\033[93m[INFO] O ficheiro de municípios já estava atualizado.\033[00m")
+            return
+
     with open(nome_arquivo, "w", encoding="utf-8") as f:
         json.dump(lista_final, f, indent=4, ensure_ascii=False)
 
     print(f"\033[92m[OK] Gravados {len(lista_final)} municípios em: {os.path.abspath(nome_arquivo)}\033[00m")
 
 
-# MAIN FINAL — DISTRITOS + MUNICÍPIOS + JSON SEPARADO
+# MAIN FINAL
 if __name__ == "__main__":
     gestor = GestorCidades()
 
@@ -127,7 +117,7 @@ if __name__ == "__main__":
     municipios_por_distrito = obter_municipios_por_distrito()
 
     # Criar JSON só de municípios
-    if municipios_por_distrito is not None:
+    if municipios_por_distrito:
         gravar_municipios_separado(municipios_por_distrito)
 
     # Inserir municípios dentro dos distritos
