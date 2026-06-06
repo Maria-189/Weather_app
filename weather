@@ -3,181 +3,163 @@ import os
 import requests
 
 URL_BASE = "https://api.ptdata.org"
-URL = URL_BASE + "/v1/geo/districts"
-FICHEIRO_JSON = "distrito_30Maio2026.json"
+FICHEIRO_DIST = "distrito_30Maio2026.json"
 FICHEIRO_MUN = "municipios_30Maio2026.json"
 
-class GestorCidades:
-    def __init__(self, nome_arquivo: str = FICHEIRO_JSON):
-        self.__nome_arquivo = nome_arquivo
-        caminho_absoluto = os.path.abspath(self.__nome_arquivo)
+# ==========================================
+# 1. GESTOR DE FICHEIROS
+# ==========================================
+class GestorFicheiro:
+    def __init__(self, nome_arquivo: str):
+        self.nome_arquivo = nome_arquivo
 
-        print(f"[DEBUG] A procurar ficheiro em: {caminho_absoluto}")
+    def verificar_ficheiro(self):
+        # Verifica se o ficheiro existe no computador
+        return os.path.exists(self.nome_arquivo)
 
-        if not os.path.exists(self.__nome_arquivo):
-            print("\033[91m[AVISO] O ficheiro não existe.\033[00m")
-            self.__escrever_arquivo([])
-            print("\033[93m[INFO] Ficheiro JSON criado e inicializado.\033[00m")
-        else:
-            print("\033[92m[OK] Ficheiro encontrado.\033[00m")
-
-    def __ler_arquivo(self):
-        if not os.path.exists(self.__nome_arquivo):
+    def ler_ficheiro(self):
+        if not self.verificar_ficheiro():
             return None
         try:
-            with open(self.__nome_arquivo, "r", encoding="utf-8") as f:
+            with open(self.nome_arquivo, "r", encoding="utf-8") as f:
                 return json.load(f)
         except:
             return None
 
-    def __escrever_arquivo(self, dados):
-        with open(self.__nome_arquivo, "w", encoding="utf-8") as f:
+    def escrever_ficheiro(self, dados):
+        with open(self.nome_arquivo, "w", encoding="utf-8") as f:
             json.dump(dados, f, indent=4, ensure_ascii=False)
 
-    def gravar_distritos(self, distritos: list):
-        conteudo_antigo = self.__ler_arquivo()
+    def atualizar_ficheiro(self, novos_dados):
+        # Verifica se o que está no ficheiro é igual aos novos dados
+        conteudo_antigo = self.ler_ficheiro()
 
-        if conteudo_antigo == distritos:
-            print("\033[93m[INFO] O ficheiro já estava atualizado. Nada foi alterado.\033[00m")
+        if conteudo_antigo == novos_dados:
+            print(f"\033[93m[INFO] O ficheiro {self.nome_arquivo} já estava atualizado.\033[00m")
         else:
-            self.__escrever_arquivo(distritos)
-            print("\033[92m[OK] Ficheiro atualizado com novos dados.\033[00m")
+            self.escrever_ficheiro(novos_dados)
+            print(f"\033[92m[OK] Ficheiro {self.nome_arquivo} atualizado com novos dados.\033[00m")
 
 
-def obter_distritos_reduzidos(url: str = URL):
-    try:
-        resposta = requests.get(url)
-        resposta.raise_for_status()
-    except:
-        print("\033[91m[ERRO] Falha ao obter distritos.\033[00m")
-        return None
-
-    dados = resposta.json()
-    lista = dados.get("data", {}).get("districts", [])
-
-    # ⭐ FORMATAR CÓDIGO DO DISTRITO PARA 2 DÍGITOS
-    return [{"code": f"{int(d['code']):02d}", "name": d["name"]} for d in lista]
+# ==========================================
+# 2. CLASSES DOS DADOS (DISTRITO E MUNICIPIO)
+# ==========================================
+class RegiaoAdministrativa:
+    def __init__(self, code: str, name: str):
+        self.code = code
+        self.name = name
 
 
-# ⭐⭐ FUNÇÃO FINAL: OFFSET + ORDEM DOS DISTRITOS + CÓDIGO DDMM ⭐⭐
-def obter_municipios_por_distrito():
-    url = URL_BASE + "/v1/geo/municipalities"
+class Distrito(RegiaoAdministrativa):
+    def __init__(self, code: str, name: str):
+        # Formata o código para ter sempre 2 dígitos (ex: "01")
+        codigo_formatado = f"{int(code):02d}"
+        super().__init__(codigo_formatado, name)
 
-    municipios = []
-    offset = 0
-    limit = 20
-
-    # Buscar todos os municípios com OFFSET
-    while True:
+    def obter_distritos(self):
+        # Vai buscar os distritos à API externa
+        url = URL_BASE + "/v1/geo/districts"
         try:
-            resposta = requests.get(url, params={"offset": offset, "limit": limit})
+            resposta = requests.get(url)
             resposta.raise_for_status()
         except:
-            print("\033[91m[ERRO] Falha ao obter municípios.\033[00m")
-            return None
+            print("\033[91m[ERRO] Falha ao obter distritos.\033[00m")
+            return []
 
         dados = resposta.json()
-        lista = dados.get("data", {}).get("municipalities", [])
-
-        if not lista:
-            break
-
-        for item in lista:
-            codigo_distrito = f"{int(item['district_code']):02d}"
-
-            municipios.append({
-                "district_code": codigo_distrito,
-                "name": item["name"]
-            })
-
-        offset += limit
-
-    # AGRUPAR POR DISTRITO
-    agrupado = {}
-    for m in municipios:
-        dist = m["district_code"]
-        if dist not in agrupado:
-            agrupado[dist] = []
-        agrupado[dist].append(m)
-
-    # ⭐ ORDEM OFICIAL DOS DISTRITOS (a que enviaste)
-    ordem_distritos = [
-        "01","02","03","04","05","06","07","08","09",
-        "10","11","12","13","14","15","16","17","18",
-        "31","32"
-    ]
-
-    resultado = {}
-
-    # ⭐ PARA CADA DISTRITO, ORDENAR MUNICÍPIOS E GERAR CÓDIGO DDMM
-    for dist in ordem_distritos:
-        if dist not in agrupado:
-            continue
-
-        lista = sorted(agrupado[dist], key=lambda x: x["name"])
-
-        nova_lista = []
-        contador = 1
-
-        for item in lista:
-            codigo_mm = f"{contador:02d}"     # 01, 02, 03...
-            codigo_final = dist + codigo_mm   # DDMM → 0201
-
-            nova_lista.append({
-                "district_code": dist,
-                "code": codigo_final,
-                "name": item["name"]
-            })
-
-            contador += 1
-
-        resultado[dist] = nova_lista
-
-    return resultado
+        lista = dados.get("data", {}).get("districts", [])
+        
+        # Cria uma lista de dicionários simples para o JSON
+        return [{"code": f"{int(d['code']):02d}", "name": d["name"]} for d in lista]
 
 
-def gravar_municipios_separado(municipios: dict, nome_arquivo=FICHEIRO_MUN):
-    lista_final = []
+class Municipio(RegiaoAdministrativa):
+    def __init__(self, code: str = "", name: str = "", district_code: str = ""):
+        super().__init__(code, name)
+        self.district_code = district_code
 
-    for dist_code, lista in municipios.items():
-        for m in lista:
-            lista_final.append({
-                "district_code": dist_code,
-                "code": m["code"],
-                "name": m["name"]
-            })
+    def obter_municipios(self):
+        # Vai buscar os municípios com a lógica do OFFSET (igual ao teu código)
+        url = URL_BASE + "/v1/geo/municipalities"
+        municipios = []
+        offset = 0
+        limit = 20
 
-    # Verificar se já existe e se está igual
-    if os.path.exists(nome_arquivo):
-        with open(nome_arquivo, "r", encoding="utf-8") as f:
-            antigo = json.load(f)
-        if antigo == lista_final:
-            print("\033[93m[INFO] O ficheiro de municípios já estava atualizado.\033[00m")
-            return
+        while True:
+            try:
+                resposta = requests.get(url, params={"offset": offset, "limit": limit})
+                resposta.raise_for_status()
+            except:
+                print("\033[91m[ERRO] Falha ao obter municípios.\033[00m")
+                return []
 
-    with open(nome_arquivo, "w", encoding="utf-8") as f:
-        json.dump(lista_final, f, indent=4, ensure_ascii=False)
+            dados = resposta.json()
+            lista = dados.get("data", {}).get("municipalities", [])
 
-    print(f"\033[92m[OK] Gravados {len(lista_final)} municípios em: {os.path.abspath(nome_arquivo)}\033[00m")
+            if not lista:
+                break
+
+            for item in lista:
+                codigo_distrito = f"{int(item['district_code']):02d}"
+                municipios.append({
+                    "district_code": codigo_distrito,
+                    "name": item["name"]
+                })
+
+            offset += limit
+
+        # Agrupar e ordenar (a tua lógica oficial)
+        agrupado = {}
+        for m in municipios:
+            dist = m["district_code"]
+            if dist not in agrupado:
+                agrupado[dist] = []
+            agrupado[dist].append(m)
+
+        ordem_distritos = ["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17","18","31","32"]
+        lista_final = []
+
+        for dist in ordem_distritos:
+            if dist not in agrupado:
+                continue
+
+            lista_ordenada = sorted(agrupado[dist], key=lambda x: x["name"])
+            contador = 1
+
+            for item in lista_ordenada:
+                codigo_mm = f"{contador:02d}"
+                codigo_final = dist + codigo_mm
+
+                lista_final.append({
+                    "district_code": dist,
+                    "code": codigo_final,
+                    "name": item["name"]
+                })
+                contador += 1
+
+        return lista_final
 
 
-# MAIN FINAL
+# ==========================================
+# 3. EXECUÇÃO DO PROGRAMA
+# ==========================================
 if __name__ == "__main__":
-    gestor = GestorCidades()
+    # Criamos os gestores para cada ficheiro
+    gestor_distritos = GestorFicheiro(FICHEIRO_DIST)
+    gestor_municipios = GestorFicheiro(FICHEIRO_MUN)
 
-    distritos = obter_distritos_reduzidos()
-    municipios_por_distrito = obter_municipios_por_distrito()
+    # Instâncias das classes para usar os métodos
+    ferramenta_distrito = Distrito("0", "")
+    ferramenta_municipio = Municipio()
 
-    # Criar JSON só de municípios
-    if municipios_por_distrito:
-        gravar_municipios_separado(municipios_por_distrito)
+    # 1. Tratar dos Distritos
+    print("A carregar distritos...")
+    dados_distritos = ferramenta_distrito.obter_distritos()
+    if dados_distritos:
+        gestor_distritos.atualizar_ficheiro(dados_distritos)
 
-    # Criar ficheiro de distritos SEM municípios
-    distritos_sem_municipios = []
-    for d in distritos:
-        distritos_sem_municipios.append({
-            "code": d["code"],
-            "name": d["name"]
-        })
-
-    gestor.gravar_distritos(distritos_sem_municipios)
+    # 2. Tratar dos Municípios
+    print("A carregar municípios...")
+    dados_municipios = ferramenta_municipio.obter_municipios()
+    if dados_municipios:
+        gestor_municipios.atualizar_ficheiro(dados_municipios)
