@@ -1,0 +1,5 @@
+from modelos import Distrito
+
+def carregar_distritos():
+    ferramenta = Distrito("0", "")
+    return ferramenta.obter_distritos()
