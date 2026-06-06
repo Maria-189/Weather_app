@@ -120,11 +120,12 @@ if __name__ == "__main__":
     if municipios_por_distrito:
         gravar_municipios_separado(municipios_por_distrito)
 
-    # Inserir municípios dentro dos distritos
-    distritos_com_municipios = []
+    # Criar ficheiro de distritos SEM municípios
+    distritos_sem_municipios = []
     for d in distritos:
-        codigo = d["code"]
-        d["municipios"] = municipios_por_distrito.get(codigo, [])
-        distritos_com_municipios.append(d)
+        distritos_sem_municipios.append({
+            "code": d["code"],
+            "name": d["name"]
+        })
 
-    gestor.gravar_distritos(distritos_com_municipios)
+    gestor.gravar_distritos(distritos_sem_municipios)
