@@ -1,0 +1,33 @@
+import requests
+from confi import URL_BASE
+
+class RegiaoAdministrativa:
+    def __init__(self, code: str, name: str):
+        self.code = code
+        self.name = name
+
+
+class Distrito(RegiaoAdministrativa):
+    def __init__(self, code: str, name: str):
+        codigo_formatado = f"{int(code):02d}"
+        super().__init__(codigo_formatado, name)
+
+    def obter_distritos(self):
+        url = URL_BASE + "/v1/geo/districts"
+        try:
+            resposta = requests.get(url)
+            resposta.raise_for_status()
+        except:
+            print("\033[91m[ERRO] Falha ao obter distritos.\033[00m")
+            return []
+
+        dados = resposta.json()
+        lista = dados.get("data", {}).get("districts", [])
+        
+        return [{"code": f"{int(d['code']):02d}", "name": d["name"]} for d in lista]
+
+
+class Municipio(RegiaoAdministrativa):
+    def __init__(self, code: str = "", name: str = "", district_code: str = ""):
+        super().__init__(code, name)
+        self.district_code = district_code
