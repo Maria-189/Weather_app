@@ -1,0 +1,21 @@
+from gestor_ficheiro import GestorFicheiro
+from distritos import carregar_distritos
+from municipios import carregar_municipios
+from confi import URL_BASE
+
+FICHEIRO_DIST = "distrito_30Maio2026.json"
+FICHEIRO_MUN = "municipios_30Maio2026.json"
+
+if __name__ == "__main__":
+    gestor_distritos = GestorFicheiro(FICHEIRO_DIST)
+    gestor_municipios = GestorFicheiro(FICHEIRO_MUN)
+
+    print("A carregar distritos...")
+    distritos = carregar_distritos()
+    gestor_distritos.atualizar_ficheiro(distritos)
+
+    print("A carregar municípios...")
+    municipios = carregar_municipios()
+    gestor_municipios.atualizar_ficheiro(municipios)
+
+    print("✔ Tudo concluído com sucesso!")
