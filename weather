@@ -55,33 +55,85 @@ def obter_distritos_reduzidos(url: str = URL):
     dados = resposta.json()
     lista = dados.get("data", {}).get("districts", [])
 
-    return [{"code": d["code"], "name": d["name"]} for d in lista]
+    # ⭐ FORMATAR CÓDIGO DO DISTRITO PARA 2 DÍGITOS
+    return [{"code": f"{int(d['code']):02d}", "name": d["name"]} for d in lista]
 
 
+# ⭐⭐ FUNÇÃO FINAL: OFFSET + ORDEM DOS DISTRITOS + CÓDIGO DDMM ⭐⭐
 def obter_municipios_por_distrito():
     url = URL_BASE + "/v1/geo/municipalities"
 
-    try:
-        resposta = requests.get(url)
-        resposta.raise_for_status()
-    except:
-        print("\033[91m[ERRO] Falha ao obter municípios.\033[00m")
-        return None
+    municipios = []
+    offset = 0
+    limit = 20
 
-    dados = resposta.json()
-    lista = dados.get("data", {}).get("municipalities", [])
+    # Buscar todos os municípios com OFFSET
+    while True:
+        try:
+            resposta = requests.get(url, params={"offset": offset, "limit": limit})
+            resposta.raise_for_status()
+        except:
+            print("\033[91m[ERRO] Falha ao obter municípios.\033[00m")
+            return None
 
+        dados = resposta.json()
+        lista = dados.get("data", {}).get("municipalities", [])
+
+        if not lista:
+            break
+
+        for item in lista:
+            codigo_distrito = f"{int(item['district_code']):02d}"
+
+            municipios.append({
+                "district_code": codigo_distrito,
+                "name": item["name"]
+            })
+
+        offset += limit
+
+    # AGRUPAR POR DISTRITO
     agrupado = {}
-    for item in lista:
-        dist = item["district_code"]
+    for m in municipios:
+        dist = m["district_code"]
         if dist not in agrupado:
             agrupado[dist] = []
-        agrupado[dist].append({
-            "code": item["code"],
-            "name": item["name"]
-        })
+        agrupado[dist].append(m)
 
-    return agrupado
+    # ⭐ ORDEM OFICIAL DOS DISTRITOS (a que enviaste)
+    ordem_distritos = [
+        "01","02","03","04","05","06","07","08","09",
+        "10","11","12","13","14","15","16","17","18",
+        "31","32"
+    ]
+
+    resultado = {}
+
+    # ⭐ PARA CADA DISTRITO, ORDENAR MUNICÍPIOS E GERAR CÓDIGO DDMM
+    for dist in ordem_distritos:
+        if dist not in agrupado:
+            continue
+
+        lista = sorted(agrupado[dist], key=lambda x: x["name"])
+
+        nova_lista = []
+        contador = 1
+
+        for item in lista:
+            codigo_mm = f"{contador:02d}"     # 01, 02, 03...
+            codigo_final = dist + codigo_mm   # DDMM → 0201
+
+            nova_lista.append({
+                "district_code": dist,
+                "code": codigo_final,
+                "name": item["name"]
+            })
+
+            contador += 1
+
+        resultado[dist] = nova_lista
+
+    return resultado
 
 
 def gravar_municipios_separado(municipios: dict, nome_arquivo=FICHEIRO_MUN):
