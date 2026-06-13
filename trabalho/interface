@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import QFont, QColor, QPainter
 from PySide6.QtCharts import QChart, QChartView, QSplineSeries, QValueAxis, QCategoryAxis
-
+from datetime import datetime, timedelta
 
 class WeatherCard(QFrame):
     """Custom widget representing a single day's weather card."""
@@ -214,27 +214,76 @@ class DistrictWeatherApp(QMainWindow):
         if not mun_code:
             return
 
-        # 1. Chamada à API SEM restrições de parâmetros que a possam bloquear
-        url = "https://api.ptdata.org/v1/weather/forecasts"
-
-        try:
-            resposta = requests.get(url)
-            resposta.raise_for_status()
-            dados_completos = resposta.json()
-            todas_previsoes = dados_completos.get("data", {}).get("forecasts", [])
-        except Exception as e:
-            print(f"\033[91m[ERRO] Falha ao ligar à API: {e}\033[00m")
-            todas_previsoes = []
-
         # Limpar os cartões antigos da interface
         while self.cards_layout.count():
             child = self.cards_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
-        # 2. Se a API devolveu vazio, mostramos um erro na própria interface!
-        if not todas_previsoes:
-            lbl_erro = QLabel("⚠️ Não foi possível obter dados da API (Lista vazia ou Erro de Ligação).")
+        url = "https://api.ptdata.org/v1/weather/forecasts"
+        dias_unicos = {}
+
+        mun_name_norm = mun_name.strip().lower()
+        dist_code_norm = str(mun_code)[:2]
+
+        print(f"A procurar até 3 dias de previsão para {mun_name}...")
+
+        # 1. Definir os 3 dias que vamos pedir à API segundo a documentação
+        hoje = datetime.now()
+        depois_de_amanha = (hoje + timedelta(days=2)).strftime("%Y-%m-%d")
+
+        datas_pesquisa = ["today", "tomorrow", depois_de_amanha]
+
+        # 2. Fazer um pedido individual para cada dia
+        for data_param in datas_pesquisa:
+            try:
+                # Usar os parâmetros documentados pela API: 'date' e 'district'
+                resposta = requests.get(url, params={"date": data_param, "district": dist_code_norm})
+                resposta.raise_for_status()
+
+                dados_completos = resposta.json()
+                lista_previsoes = dados_completos.get("data", {}).get("forecasts", [])
+
+                if not lista_previsoes:
+                    continue
+
+                previsao_escolhida = None
+
+                # Tentativa 1: Como só há 35 cidades, procuramos o nome exato
+                for p in lista_previsoes:
+                    loc_name = str(p.get("location_name", "")).strip().lower()
+                    if loc_name == mun_name_norm:
+                        previsao_escolhida = p
+                        break
+
+                # Tentativa 2: Se a nossa cidade não for uma das 35, usamos os dados do Distrito (fallback)
+                if not previsao_escolhida:
+                    for p in lista_previsoes:
+                        d_code = str(p.get("district_code", "")).zfill(2)
+                        if d_code == dist_code_norm:
+                            previsao_escolhida = p
+                            break
+
+                # Se encontrámos dados, guardamos para desenhar o cartão
+                if previsao_escolhida:
+                    dt_prev = previsao_escolhida.get("forecast_date")
+                    if not dt_prev:  # Se a API falhar em devolver a data, geramos nós
+                        if data_param == "today":
+                            dt_prev = hoje.strftime("%Y-%m-%d")
+                        elif data_param == "tomorrow":
+                            dt_prev = (hoje + timedelta(days=1)).strftime("%Y-%m-%d")
+                        else:
+                            dt_prev = data_param
+
+                    if dt_prev not in dias_unicos:
+                        dias_unicos[dt_prev] = previsao_escolhida
+
+            except Exception as e:
+                print(f"\033[91m[ERRO] Falha ao ligar à API para o dia '{data_param}': {e}\033[00m")
+
+        # 3. Se a API não devolver nada de todo
+        if not dias_unicos:
+            lbl_erro = QLabel(f"⚠️ A API não possui dados metereológicos para {mun_name}.")
             lbl_erro.setStyleSheet("color: #f87171; font-size: 14px;")
             self.cards_layout.addWidget(lbl_erro)
             return
@@ -243,40 +292,8 @@ class DistrictWeatherApp(QMainWindow):
         dados_grafico_low = []
         eixo_x_labels = []
 
-        dias_unicos = {}
-        mun_name_norm = mun_name.strip().lower()
-        dist_code_norm = str(mun_code)[:2]
-
-        # Tentativa 1: Encontrar pela cidade exata (ignorando maiúsculas e espaços)
-        for p in todas_previsoes:
-            loc_name = str(p.get("location_name", "")).strip().lower()
-            if loc_name == mun_name_norm:
-                dt_prev = p.get("forecast_date")
-                if dt_prev and dt_prev not in dias_unicos:
-                    dias_unicos[dt_prev] = p
-
-        # Tentativa 2 (Fallback): Encontrar pelo distrito (resolvendo problema de 1 vs "01")
-        if not dias_unicos:
-            for p in todas_previsoes:
-                d_code = str(p.get("district_code", "")).zfill(2)
-                if d_code == dist_code_norm:
-                    dt_prev = p.get("forecast_date")
-                    if dt_prev and dt_prev not in dias_unicos:
-                        dias_unicos[dt_prev] = p
-
-        # Tentativa 3 (Fallback Final): Mostrar os primeiros resultados que a API der
-        if not dias_unicos:
-            for p in todas_previsoes:
-                dt_prev = p.get("forecast_date")
-                if dt_prev and dt_prev not in dias_unicos:
-                    dias_unicos[dt_prev] = p
-
         previsoes = list(dias_unicos.values())
         previsoes.sort(key=lambda x: x.get("forecast_date", ""))
-        previsoes = previsoes[:5]
-
-        if not previsoes:
-            return
 
         for i, dia in enumerate(previsoes):
             dt_str = dia.get("forecast_date", "")
@@ -299,7 +316,6 @@ class DistrictWeatherApp(QMainWindow):
             else:
                 emoji = "🌤️"
 
-            # 3. Prevenir crash se a temperatura vier como string ou None
             temp_max_val = dia.get("t_max", 0)
             temp_min_val = dia.get("t_min", 0)
 
@@ -331,7 +347,7 @@ class DistrictWeatherApp(QMainWindow):
             dados_grafico_low.append(t_min_float)
             eixo_x_labels.append(nome_dia)
 
-        # 4. Atualizar o Gráfico com segurança
+        # 4. Atualizar o Gráfico
         chart = QChart()
         chart.setBackgroundVisible(False)
         chart.legend().hide()
@@ -339,7 +355,6 @@ class DistrictWeatherApp(QMainWindow):
         high_series = QSplineSeries()
         low_series = QSplineSeries()
 
-        # Evitar crash visual do Qt caso a API só devolva 1 dia de dados
         if len(dados_grafico_high) == 1:
             dados_grafico_high.append(dados_grafico_high[0])
             dados_grafico_low.append(dados_grafico_low[0])
@@ -372,12 +387,9 @@ class DistrictWeatherApp(QMainWindow):
         if dados_grafico_low and dados_grafico_high:
             min_y = min(dados_grafico_low) - 5
             max_y = max(dados_grafico_high) + 5
-
-            # Impedir crash matemático se máximo e mínimo forem idênticos (ex: temperatura a 0)
             if min_y >= max_y:
                 min_y -= 5
                 max_y += 5
-
             axis_y.setRange(min_y, max_y)
 
         axis_y.setLabelFormat("%d°C")
@@ -390,7 +402,7 @@ class DistrictWeatherApp(QMainWindow):
 
         self.chart_view.setChart(chart)
 
-
+        
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 10))
