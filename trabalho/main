@@ -13,9 +13,14 @@ if __name__ == "__main__":
     print("A carregar distritos...")
     distritos = carregar_distritos()
 
-    # ⭐ ADICIONAR ARQUIPÉLAGOS AOS DISTRITOS
-    distritos.append({"code": "31", "name": "Região Autónoma da Madeira"})
-    distritos.append({"code": "32", "name": "Região Autónoma dos Açores"})
+    # ⭐ ADICIONAR ARQUIPÉLAGOS SEM REPETIR
+    codigos_existentes = {d["code"] for d in distritos}
+
+    if "31" not in codigos_existentes:
+        distritos.append({"code": "31", "name": "Região Autónoma da Madeira"})
+
+    if "32" not in codigos_existentes:
+        distritos.append({"code": "32", "name": "Região Autónoma dos Açores"})
 
     gestor_distritos.atualizar_ficheiro(distritos)
 
@@ -23,7 +28,7 @@ if __name__ == "__main__":
     municipios_cont = carregar_municipios()
     municipios_arq = carregar_arquipelagos()
 
-    # ⭐ JUNTAR CONTINENTE + ARQUIPÉLAGOS
+    # ⭐ JUNTAR CONTINENTE + ARQUIPÉLAGOS (SEM DUPLICAR)
     municipios = municipios_cont + municipios_arq
 
     gestor_municipios.atualizar_ficheiro(municipios)
