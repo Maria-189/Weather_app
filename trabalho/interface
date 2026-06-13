@@ -1,0 +1,603 @@
+import sys
+import json
+import os
+import requests
+from datetime import datetime, timedelta
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                               QHBoxLayout, QLabel, QComboBox, QPushButton,
+                               QLineEdit, QFrame, QGraphicsDropShadowEffect,
+                               QCompleter, QMessageBox)
+from PySide6.QtCore import Qt, QPointF, QThread, Signal
+from PySide6.QtGui import QFont, QColor, QPainter
+from PySide6.QtCharts import QChart, QChartView, QSplineSeries, QValueAxis, QCategoryAxis
+
+# ─────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────
+URL_BASE = "https://api.ptdata.org"
+FICHEIRO_DIST = "distrito_30Maio2026.json"
+FICHEIRO_MUN  = "municipios_30Maio2026.json"
+
+CONDICAO_ICONS = {
+    0:  ("☀️",  "Clear sky"),
+    1:  ("🌤️", "Mainly clear"),
+    2:  ("⛅",  "Partly cloudy"),
+    3:  ("☁️",  "Overcast"),
+    45: ("🌫️", "Foggy"),
+    48: ("🌫️", "Icy fog"),
+    51: ("🌦️", "Light drizzle"),
+    53: ("🌦️", "Drizzle"),
+    55: ("🌧️", "Heavy drizzle"),
+    61: ("🌧️", "Light rain"),
+    63: ("🌧️", "Rain"),
+    65: ("🌧️", "Heavy rain"),
+    71: ("🌨️", "Light snow"),
+    73: ("🌨️", "Snow"),
+    75: ("❄️",  "Heavy snow"),
+    80: ("🌦️", "Showers"),
+    81: ("🌧️", "Heavy showers"),
+    82: ("⛈️",  "Violent showers"),
+    95: ("⛈️",  "Thunderstorm"),
+    96: ("⛈️",  "Thunderstorm w/ hail"),
+    99: ("⛈️",  "Thunderstorm w/ heavy hail"),
+}
+
+# ─────────────────────────────────────────────
+# CARREGAMENTO DE DADOS GEO
+# ─────────────────────────────────────────────
+
+def carregar_distritos_local():
+    if os.path.exists(FICHEIRO_DIST):
+        with open(FICHEIRO_DIST, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def carregar_municipios_local():
+    if os.path.exists(FICHEIRO_MUN):
+        with open(FICHEIRO_MUN, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def carregar_distritos_api():
+    try:
+        r = requests.get(URL_BASE + "/v1/geo/districts", timeout=8)
+        r.raise_for_status()
+        dados = r.json().get("data", {}).get("districts", [])
+        lista = [{"code": f"{int(d['code']):02d}", "name": d["name"]} for d in dados]
+        lista.append({"code": "31", "name": "Região Autónoma da Madeira"})
+        lista.append({"code": "32", "name": "Região Autónoma dos Açores"})
+        return sorted(lista, key=lambda x: x["name"])
+    except:
+        return []
+
+def carregar_municipios_api(district_code: str):
+    try:
+        municipios = []
+        offset, limit = 0, 20
+        while True:
+            r = requests.get(URL_BASE + "/v1/geo/municipalities",
+                             params={"offset": offset, "limit": limit}, timeout=8)
+            r.raise_for_status()
+            lista = r.json().get("data", {}).get("municipalities", [])
+            if not lista:
+                break
+            for item in lista:
+                cod = f"{int(item['district_code']):02d}"
+                if cod == district_code:
+                    municipios.append({"district_code": cod, "name": item["name"]})
+            offset += limit
+        return sorted(municipios, key=lambda x: x["name"])
+    except:
+        return []
+
+# ─────────────────────────────────────────────
+# WORKER — API PTDATA WEATHER
+# ─────────────────────────────────────────────
+
+class WeatherWorker(QThread):
+    resultado = Signal(dict)
+    erro      = Signal(str)
+
+    def __init__(self, municipio_nome: str, distrito_nome: str):
+        super().__init__()
+        self.municipio_nome = municipio_nome
+        self.distrito_nome  = distrito_nome
+
+    def run(self):
+        dados = self._obter_meteorologia_ptdata(self.municipio_nome)
+        if dados:
+            self.resultado.emit(dados)
+        else:
+            self.erro.emit("Não foi possível obter dados meteorológicos da API PTData.")
+
+    def _obter_meteorologia_ptdata(self, municipio):
+        try:
+            params = {
+                "municipality": municipio,
+                "days": 5,
+                "limit": 5
+            }
+
+            r = requests.get(
+                "https://api.ptdata.org/v1/weather/forecasts",
+                params=params,
+                timeout=10
+            )
+            r.raise_for_status()
+
+            forecasts = r.json().get("data", {}).get("forecasts", [])
+            if not forecasts:
+                return None
+
+            dados = {
+                "daily": {
+                    "time": [],
+                    "weathercode": [],
+                    "temperature_2m_max": [],
+                    "temperature_2m_min": [],
+                    "windspeed_10m_max": [],
+                    "precipitation_probability_max": []
+                },
+                "current_weather": {
+                    "temperature": forecasts[0].get("temp_max")
+                }
+            }
+
+            for f in forecasts:
+                dados["daily"]["time"].append(f.get("date"))
+                dados["daily"]["weathercode"].append(f.get("weather_code"))
+                dados["daily"]["temperature_2m_max"].append(f.get("temp_max"))
+                dados["daily"]["temperature_2m_min"].append(f.get("temp_min"))
+                dados["daily"]["windspeed_10m_max"].append(f.get("wind_max"))
+                dados["daily"]["precipitation_probability_max"].append(f.get("precip_prob"))
+
+            return dados
+
+        except Exception as e:
+            print("[ERRO] PTData Weather:", e)
+            return None
+
+# ─────────────────────────────────────────────
+# WIDGETS DA INTERFACE
+# ─────────────────────────────────────────────
+
+class WeatherCard(QFrame):
+    def __init__(self, day_name, date_str, condition, emoji, current_temp,
+                 high_temp, low_temp, wind, precip=None):
+        super().__init__()
+        self.setObjectName("WeatherCard")
+        self.setStyleSheet("""
+            QFrame#WeatherCard {
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 12px;
+            }
+            QLabel { color: #f8fafc; }
+        """)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 80))
+        shadow.setOffset(0, 4)
+        self.setGraphicsEffect(shadow)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+        layout.setContentsMargins(15, 20, 15, 20)
+
+        lbl_day = QLabel(day_name)
+        lbl_day.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl_day.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_date = QLabel(date_str)
+        lbl_date.setFont(QFont("Segoe UI", 9))
+        lbl_date.setStyleSheet("color: #94a3b8;")
+        lbl_date.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_cond = QLabel(condition)
+        lbl_cond.setFont(QFont("Segoe UI", 10))
+        lbl_cond.setStyleSheet("color: #cbd5e1;")
+        lbl_cond.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_icon = QLabel(emoji)
+        lbl_icon.setFont(QFont("Segoe UI", 40))
+        lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_curr_label = QLabel("NOW")
+        lbl_curr_label.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        lbl_curr_label.setStyleSheet("color: #38bdf8;")
+        lbl_curr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_temp = QLabel(f"{current_temp}°C" if current_temp != "--" else "--")
+        lbl_temp.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
+        lbl_temp.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        high_low_layout = QHBoxLayout()
+        high_low_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        high_low_layout.setSpacing(12)
+
+        lbl_high = QLabel(f"🔺 {high_temp}°C" if high_temp != "--" else "🔺 --")
+        lbl_high.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
+        lbl_high.setStyleSheet("color: #f87171;")
+
+        lbl_low = QLabel(f"🔻 {low_temp}°C" if low_temp != "--" else "🔻 --")
+        lbl_low.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
+        lbl_low.setStyleSheet("color: #60a5fa;")
+
+        high_low_layout.addWidget(lbl_high)
+        high_low_layout.addWidget(lbl_low)
+
+        lbl_wind = QLabel(f"💨 {wind}" if wind != "--" else "💨 --")
+        lbl_wind.setFont(QFont("Segoe UI", 9))
+        lbl_wind.setStyleSheet("color: #94a3b8; margin-top: 3px;")
+        lbl_wind.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        layout.addWidget(lbl_day)
+        layout.addWidget(lbl_date)
+        layout.addWidget(lbl_cond)
+        layout.addWidget(lbl_icon)
+        layout.addWidget(lbl_curr_label)
+        layout.addWidget(lbl_temp)
+        layout.addLayout(high_low_layout)
+        layout.addWidget(lbl_wind)
+
+        if precip is not None:
+            lbl_precip = QLabel(f"💧 {precip}" if precip != "--" else "💧 --")
+            lbl_precip.setFont(QFont("Segoe UI", 9))
+            lbl_precip.setStyleSheet("color: #38bdf8;")
+            lbl_precip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(lbl_precip)
+
+# ─────────────────────────────────────────────
+# JANELA PRINCIPAL
+# ─────────────────────────────────────────────
+
+class DistrictWeatherApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("DistrictWeather - 5-Day Evolution Tracking")
+        self.resize(1200, 750)
+        self.setMinimumSize(1050, 680)
+
+        self._distritos  = []
+        self._municipios = []
+        self._worker     = None
+
+        central_widget = QWidget()
+        central_widget.setObjectName("CentralWidget")
+        self.setCentralWidget(central_widget)
+
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(30, 20, 30, 30)
+        main_layout.setSpacing(20)
+
+        self.setStyleSheet("""
+            QWidget#CentralWidget { background-color: #0f172a; }
+            QLabel#AppTitle { color: #38bdf8; font-size: 22px; font-weight: bold; }
+            QLabel#SectionTitle { color: #ffffff; font-size: 14px; font-weight: bold; }
+            QLabel#FieldLabel { color: #94a3b8; font-size: 12px; }
+            QComboBox, QLineEdit {
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 6px 12px;
+                color: #f8fafc;
+                font-size: 12px;
+            }
+            QPushButton {
+                background-color: #0284c7;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 16px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #0369a1; }
+            QPushButton:disabled { background-color: #334155; color: #64748b; }
+        """)
+
+        header_layout = QHBoxLayout()
+        app_title = QLabel("🌧 DistrictWeather")
+        app_title.setObjectName("AppTitle")
+        header_layout.addWidget(app_title)
+        header_layout.addStretch()
+
+        self.combo_district = QComboBox()
+        self.combo_district.setMinimumWidth(220)
+        self.combo_district.currentIndexChanged.connect(self._on_district_changed)
+
+        self.combo_city = QComboBox()
+        self.combo_city.setMinimumWidth(200)
+
+        self.btn_get_weather = QPushButton("Get Weather")
+        self.btn_get_weather.clicked.connect(self.update_weather)
+
+        header_layout.addWidget(QLabel("Distrito:", objectName="FieldLabel"))
+        header_layout.addWidget(self.combo_district)
+        header_layout.addWidget(QLabel("Município:", objectName="FieldLabel"))
+        header_layout.addWidget(self.combo_city)
+        header_layout.addWidget(self.btn_get_weather)
+        main_layout.addLayout(header_layout)
+
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("🔍 Search locations...")
+        self.search_bar.returnPressed.connect(self._on_search)
+        main_layout.addWidget(self.search_bar)
+
+        self.lbl_status = QLabel("")
+        self.lbl_status.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.lbl_status)
+
+        self.cards_layout = QHBoxLayout()
+        self.cards_layout.setSpacing(12)
+        main_layout.addLayout(self.cards_layout)
+
+        lbl_graph_title = QLabel("TEMPERATURE EVOLUTION (5-DAY TREND OUTLOOK)")
+        lbl_graph_title.setObjectName("SectionTitle")
+        main_layout.addWidget(lbl_graph_title)
+
+        self.chart_view = QChartView()
+        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.chart_view.setStyleSheet("""
+            background-color: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+        """)
+        empty_chart = QChart()
+        empty_chart.setBackgroundVisible(False)
+        empty_chart.legend().hide()
+        self.chart_view.setChart(empty_chart)
+        main_layout.addWidget(self.chart_view, stretch=1)
+
+        self._carregar_geo()
+
+    # ─────────────────────────────────────────────
+    # GEO
+    # ─────────────────────────────────────────────
+
+    def _carregar_geo(self):
+        self._distritos = carregar_distritos_local()
+        if not self._distritos:
+            self._set_status("A obter distritos da API…")
+            self._distritos = carregar_distritos_api()
+
+        self._municipios = carregar_municipios_local()
+        if not self._municipios:
+            self._set_status("A obter municípios da API…")
+            self._municipios = carregar_municipios_api("11")
+
+        self._distritos = sorted(self._distritos, key=lambda d: d["name"])
+
+        self.combo_district.blockSignals(True)
+        self.combo_district.clear()
+        for d in self._distritos:
+            self.combo_district.addItem(d["name"], userData=d["code"])
+        self.combo_district.blockSignals(False)
+
+        todos_nomes = [m["name"] for m in self._municipios]
+        completer = QCompleter(todos_nomes, self)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.search_bar.setCompleter(completer)
+
+        if self._distritos:
+            self._on_district_changed(0)
+
+        self._set_status("")
+
+        if self.combo_city.count() > 0:
+            self.update_weather()
+
+    def _municipios_do_distrito(self, district_code: str):
+        filtrados = [m for m in self._municipios if m.get("district_code") == district_code]
+        if not filtrados:
+            filtrados = carregar_municipios_api(district_code)
+            self._municipios.extend(filtrados)
+        return sorted(filtrados, key=lambda m: m["name"])
+
+    def _on_district_changed(self, index):
+        if index < 0 or index >= len(self._distritos):
+            return
+        code = self.combo_district.itemData(index)
+        municipios = self._municipios_do_distrito(code)
+
+        self.combo_city.blockSignals(True)
+        self.combo_city.clear()
+        for m in municipios:
+            self.combo_city.addItem(m["name"], userData=m.get("code", ""))
+        self.combo_city.blockSignals(False)
+
+    def _on_search(self):
+        texto = self.search_bar.text().strip()
+        if not texto:
+            return
+        for m in self._municipios:
+            if texto.lower() in m["name"].lower():
+                district_code = m.get("district_code", "")
+                for i, d in enumerate(self._distritos):
+                    if d["code"] == district_code:
+                        self.combo_district.setCurrentIndex(i)
+                        break
+                for j in range(self.combo_city.count()):
+                    if self.combo_city.itemText(j).lower() == m["name"].lower():
+                        self.combo_city.setCurrentIndex(j)
+                        break
+                self.update_weather()
+                return
+        self._set_status(f"Município '{texto}' não encontrado.")
+
+    # ─────────────────────────────────────────────
+    # METEOROLOGIA
+    # ─────────────────────────────────────────────
+
+    def update_weather(self):
+        municipio = self.combo_city.currentText()
+        distrito  = self.combo_district.currentText()
+
+        if not municipio:
+            return
+
+        self._set_status(f"A obter dados para {municipio}…")
+        self.btn_get_weather.setEnabled(False)
+
+        if self._worker and self._worker.isRunning():
+            self._worker.terminate()
+
+        self._worker = WeatherWorker(municipio, distrito)
+        self._worker.resultado.connect(self._on_weather_ready)
+        self._worker.erro.connect(self._on_weather_erro)
+        self._worker.start()
+
+    def _on_weather_ready(self, dados: dict):
+        self.btn_get_weather.setEnabled(True)
+        municipio = self.combo_city.currentText()
+        self._set_status(f"Dados actualizados para {municipio}.")
+
+        daily   = dados.get("daily", {})
+        current = dados.get("current_weather", {})
+
+        datas   = daily.get("time", []) or []
+        codes   = daily.get("weathercode", []) or []
+        maxs    = daily.get("temperature_2m_max", []) or []
+        mins    = daily.get("temperature_2m_min", []) or []
+        winds   = daily.get("windspeed_10m_max", []) or []
+        precips = daily.get("precipitation_probability_max", []) or []
+
+        t = current.get("temperature")
+        temp_actual = round(t) if isinstance(t, (int, float)) else "--"
+
+        nomes_dias = ["Hoje", "Amanhã", "", "", "", ""]
+        semana_pt  = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+        hoje       = datetime.today()
+        for i in range(2, 5):
+            d = hoje + timedelta(days=i)
+            nomes_dias[i] = semana_pt[d.weekday()]
+
+        while self.cards_layout.count():
+            child = self.cards_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        high_vals = []
+        low_vals  = []
+
+        for i in range(min(5, len(datas))):
+            code_raw = codes[i] if i < len(codes) else None
+            code  = code_raw if isinstance(code_raw, int) else 0
+            emoji, cond = CONDICAO_ICONS.get(code, ("🌡️", "Unknown"))
+
+            max_raw = maxs[i] if i < len(maxs) else None
+            min_raw = mins[i] if i < len(mins) else None
+            wind_raw = winds[i] if i < len(winds) else None
+            prec_raw = precips[i] if i < len(precips) else None
+
+            high_num = max_raw if isinstance(max_raw, (int, float)) else None
+            low_num  = min_raw if isinstance(min_raw, (int, float)) else None
+            wind_num = wind_raw if isinstance(wind_raw, (int, float)) else None
+            prec_num = prec_raw if isinstance(prec_raw, (int, float)) else None
+
+            high  = round(high_num) if high_num is not None else "--"
+            low   = round(low_num)  if low_num is not None else "--"
+            wind  = f"{round(wind_num)} km/h" if wind_num is not None else "--"
+            prec  = f"{round(prec_num)}%" if prec_num is not None else "--"
+
+            try:
+                dt_obj = datetime.strptime(datas[i], "%Y-%m-%d")
+                date_str = dt_obj.strftime("%d %b")
+            except:
+                date_str = datas[i]
+
+            curr_t = temp_actual if i == 0 else high
+
+            card = WeatherCard(
+                nomes_dias[i], date_str, cond, emoji,
+                curr_t, high, low, wind, prec
+            )
+            self.cards_layout.addWidget(card)
+
+            high_vals.append(high_num)
+            low_vals.append(low_num)
+
+        self._update_chart(datas[:5], high_vals, low_vals)
+
+    def _on_weather_erro(self, mensagem: str):
+        self.btn_get_weather.setEnabled(True)
+        self._set_status("")
+        QMessageBox.warning(self, "Erro", mensagem)
+
+    def _update_chart(self, datas, high_vals, low_vals):
+        semana_abrev = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+
+        chart = QChart()
+        chart.setBackgroundVisible(False)
+        chart.legend().hide()
+
+        high_series = QSplineSeries()
+        low_series  = QSplineSeries()
+
+        for i, (h, l) in enumerate(zip(high_vals, low_vals)):
+            if isinstance(h, (int, float)):
+                high_series.append(QPointF(i, h))
+            if isinstance(l, (int, float)):
+                low_series.append(QPointF(i, l))
+
+        high_series.setColor(QColor("#f87171"))
+        high_series.setPointsVisible(True)
+        low_series.setColor(QColor("#60a5fa"))
+        low_series.setPointsVisible(True)
+
+        chart.addSeries(high_series)
+        chart.addSeries(low_series)
+
+        axis_x = QCategoryAxis()
+        for i, data_str in enumerate(datas):
+            try:
+                dt_obj = datetime.strptime(data_str, "%Y-%m-%d")
+                label  = f"{'Hoje' if i == 0 else semana_abrev[dt_obj.weekday()]} ({dt_obj.strftime('%d/%m')})"
+            except:
+                label = data_str
+            axis_x.append(label, i)
+
+        axis_x.setLabelsColor(QColor("#94a3b8"))
+        axis_x.setLinePenColor(QColor("#334155"))
+        axis_x.setGridLineVisible(False)
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        high_series.attachAxis(axis_x)
+        low_series.attachAxis(axis_x)
+
+        nums = [v for v in (high_vals + low_vals) if isinstance(v, (int, float))]
+        if nums:
+            y_min = max(0, min(nums) - 3)
+            y_max = max(nums) + 3
+        else:
+            y_min, y_max = 0, 10
+
+        axis_y = QValueAxis()
+        axis_y.setRange(y_min, y_max)
+        axis_y.setLabelFormat("%d°C")
+        axis_y.setLabelsColor(QColor("#94a3b8"))
+        axis_y.setLinePenColor(QColor("#334155"))
+        axis_y.setGridLinePen(QColor("#1e293b"))
+        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        high_series.attachAxis(axis_y)
+        low_series.attachAxis(axis_y)
+
+        self.chart_view.setChart(chart)
+
+    def _set_status(self, msg: str):
+        self.lbl_status.setText(msg)
+        QApplication.processEvents()
+
+# ─────────────────────────────────────────────
+# ENTRY POINT
+# ─────────────────────────────────────────────
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setFont(QFont("Segoe UI", 10))
+    window = DistrictWeatherApp()
+    window.show()
+    sys.exit(app.exec())
