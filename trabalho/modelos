@@ -3,9 +3,14 @@ from confi import URL_BASE
 
 class RegiaoAdministrativa:
     def __init__(self, code: str, name: str):
-        self.code = code
-        self.name = name
+        self.__code = code
+        self.__name = name
 
+    def get_code(self):
+        return self.__code
+
+    def get_name(self):
+        return self.__name
 
 class Distrito(RegiaoAdministrativa):
     def __init__(self, code: str, name: str):
@@ -20,14 +25,14 @@ class Distrito(RegiaoAdministrativa):
         except:
             print("\033[91m[ERRO] Falha ao obter distritos.\033[00m")
             return []
-
         dados = resposta.json()
         lista = dados.get("data", {}).get("districts", [])
-        
         return [{"code": f"{int(d['code']):02d}", "name": d["name"]} for d in lista]
-
 
 class Municipio(RegiaoAdministrativa):
     def __init__(self, code: str = "", name: str = "", district_code: str = ""):
         super().__init__(code, name)
-        self.district_code = district_code
+        self.__district_code = district_code
+
+    def get_district_code(self):
+        return self.__district_code
