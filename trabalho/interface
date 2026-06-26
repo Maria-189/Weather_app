@@ -1,18 +1,15 @@
 import sys
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QComboBox, QPushButton,
                                QLineEdit, QFrame, QGraphicsDropShadowEffect)
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import QFont, QColor, QPainter
 from PySide6.QtCharts import QChart, QChartView, QSplineSeries, QValueAxis, QCategoryAxis
-from datetime import datetime, timedelta
 
 class WeatherCard(QFrame):
-    """Custom widget representing a single day's weather card."""
-
     def __init__(self, day_name, date_str, condition, emoji, current_temp, high_temp, low_temp, wind, precip=None):
         super().__init__()
         self.setObjectName("WeatherCard")
@@ -24,388 +21,236 @@ class WeatherCard(QFrame):
             }
             QLabel { color: #f8fafc; }
         """)
-
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(15)
         shadow.setColor(QColor(0, 0, 0, 80))
         shadow.setOffset(0, 4)
         self.setGraphicsEffect(shadow)
-
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
         layout.setContentsMargins(15, 20, 15, 20)
-
         lbl_day = QLabel(day_name)
-        lbl_day.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        lbl_day.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+        lbl_day.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        lbl_day.setStyleSheet("color: #94a3b8;")
         lbl_date = QLabel(date_str)
-        lbl_date.setFont(QFont("Segoe UI", 9))
-        lbl_date.setStyleSheet("color: #94a3b8;")
-        lbl_date.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+        lbl_date.setFont(QFont("Arial", 9))
+        lbl_date.setStyleSheet("color: #64748b;")
+        lbl_emoji = QLabel(emoji)
+        lbl_emoji.setFont(QFont("Arial", 26))
+        lbl_emoji.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_temp = QLabel(f"{current_temp}°C")
+        lbl_temp.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        lbl_temp.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_cond = QLabel(condition)
-        lbl_cond.setFont(QFont("Segoe UI", 10))
+        lbl_cond.setFont(QFont("Arial", 10))
         lbl_cond.setStyleSheet("color: #cbd5e1;")
         lbl_cond.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        lbl_icon = QLabel(emoji)
-        lbl_icon.setFont(QFont("Segoe UI", 40))
-        lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        lbl_curr_label = QLabel("NOW")
-        lbl_curr_label.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-        lbl_curr_label.setStyleSheet("color: #38bdf8;")
-        lbl_curr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        lbl_temp = QLabel(f"{current_temp}°C")
-        lbl_temp.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
-        lbl_temp.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        high_low_layout = QHBoxLayout()
-        high_low_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        high_low_layout.setSpacing(12)
-
-        lbl_high = QLabel(f"🔺 {high_temp}°C")
-        lbl_high.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
-        lbl_high.setStyleSheet("color: #f87171;")
-
-        lbl_low = QLabel(f"🔻 {low_temp}°C")
-        lbl_low.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
-        lbl_low.setStyleSheet("color: #60a5fa;")
-
-        high_low_layout.addWidget(lbl_high)
-        high_low_layout.addWidget(lbl_low)
-
-        lbl_wind = QLabel(f"💨 {wind}")
-        lbl_wind.setFont(QFont("Segoe UI", 9))
-        lbl_wind.setStyleSheet("color: #94a3b8; margin-top: 3px;")
-        lbl_wind.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+        lbl_range = QLabel(f"↑ {high_temp}°C  ↓ {low_temp}°C")
+        lbl_range.setFont(QFont("Arial", 9))
+        lbl_range.setStyleSheet("color: #94a3b8;")
+        lbl_range.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_wind = QLabel(f"💨 {wind} km/h")
+        lbl_wind.setFont(QFont("Arial", 9))
+        lbl_wind.setStyleSheet("color: #94a3b8;")
         layout.addWidget(lbl_day)
         layout.addWidget(lbl_date)
-        layout.addWidget(lbl_cond)
-        layout.addWidget(lbl_icon)
-        layout.addWidget(lbl_curr_label)
+        layout.addWidget(lbl_emoji)
         layout.addWidget(lbl_temp)
-        layout.addLayout(high_low_layout)
+        layout.addWidget(lbl_cond)
+        layout.addWidget(lbl_range)
+        layout.addSpacing(10)
         layout.addWidget(lbl_wind)
-
-        if precip:
-            lbl_precip = QLabel(f"💧 {precip}")
-            lbl_precip.setFont(QFont("Segoe UI", 9))
+        if precip is not None:
+            lbl_precip = QLabel(f"💧 {precip}%")
+            lbl_precip.setFont(QFont("Arial", 9))
             lbl_precip.setStyleSheet("color: #38bdf8;")
-            lbl_precip.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(lbl_precip)
-
 
 class DistrictWeatherApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DistrictWeather - 5-Day Evolution Tracking")
-        self.resize(1200, 750)
-        self.setMinimumSize(1050, 680)
-
-        self.distritos_dados = self.carregar_ficheiro_json("distrito_30Maio2026.json")
-        self.municipios_dados = self.carregar_ficheiro_json("municipios_30Maio2026.json")
-
-        central_widget = QWidget()
-        central_widget.setObjectName("CentralWidget")
-        self.setCentralWidget(central_widget)
-
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(30, 20, 30, 30)
-        main_layout.setSpacing(20)
-
-        self.setStyleSheet("""
-            QWidget#CentralWidget { background-color: #0f172a; }
-            QLabel#AppTitle { color: #38bdf8; font-size: 22px; font-weight: bold; }
-            QLabel#SectionTitle { color: #ffffff; font-size: 14px; font-weight: bold; }
-            QLabel#FieldLabel { color: #94a3b8; font-size: 12px; }
+        self.setWindowTitle("Previsão do Tempo IPMA")
+        self.resize(850, 650)
+        self.setStyleSheet("QMainWindow { background-color: #0f172a; }")
+        self.__distritos_dados = self.__carregar_ficheiro_json("distrito_30Maio2026.json")
+        self.__municipios_dados = self.__carregar_ficheiro_json("municipios_30Maio2026.json")
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QVBoxLayout(main_widget)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
+        controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(10)
+        self.combo_district = QComboBox()
+        self.combo_city = QComboBox()
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Filtrar municípios...")
+        control_style = """
             QComboBox, QLineEdit {
                 background-color: #1e293b;
                 border: 1px solid #334155;
                 border-radius: 6px;
                 padding: 6px 12px;
                 color: #f8fafc;
-                font-size: 12px;
             }
+            QComboBox::drop-down { border: none; }
+        """
+        self.combo_district.setStyleSheet(control_style)
+        self.combo_city.setStyleSheet(control_style)
+        self.search_bar.setStyleSheet(control_style)
+        for dist in self.__distritos_dados:
+            self.combo_district.addItem(dist["name"], dist["code"])
+        btn_get_weather = QPushButton("Ver Estado do Tempo")
+        btn_get_weather.setStyleSheet("""
             QPushButton {
-                background-color: #0284c7;
+                background-color: #2563eb;
                 color: white;
-                border: none;
                 border-radius: 6px;
-                padding: 7px 16px;
-                font-size: 12px;
+                padding: 6px 16px;
                 font-weight: bold;
             }
-            QPushButton:hover { background-color: #0369a1; }
+            QPushButton:hover { background-color: #1d4ed8; }
         """)
-
-        header_layout = QHBoxLayout()
-        app_title = QLabel("🌧 DistrictWeather")
-        app_title.setObjectName("AppTitle")
-        header_layout.addWidget(app_title)
-        header_layout.addStretch()
-
-        self.combo_district = QComboBox()
-        self.combo_city = QComboBox()
-
-        for d in self.distritos_dados:
-            self.combo_district.addItem(d["name"], userData=d["code"])
-
-        self.combo_district.currentIndexChanged.connect(self.atualizar_combo_cidades)
-
-        if self.distritos_dados:
-            self.atualizar_combo_cidades(0)
-
-        btn_get_weather = QPushButton("Get Weather")
-        btn_get_weather.clicked.connect(self.update_weather)
-
-        header_layout.addWidget(QLabel("District:", objectName="FieldLabel"))
-        header_layout.addWidget(self.combo_district)
-        header_layout.addWidget(QLabel("City:", objectName="FieldLabel"))
-        header_layout.addWidget(self.combo_city)
-        header_layout.addWidget(btn_get_weather)
-        main_layout.addLayout(header_layout)
-
-        self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("🔍 Search locations...")
-        main_layout.addWidget(self.search_bar)
-
+        controls_layout.addWidget(self.combo_district, 2)
+        controls_layout.addWidget(self.search_bar, 2)
+        controls_layout.addWidget(self.combo_city, 3)
+        controls_layout.addWidget(btn_get_weather, 1)
+        main_layout.addLayout(controls_layout)
         self.cards_layout = QHBoxLayout()
         self.cards_layout.setSpacing(12)
         main_layout.addLayout(self.cards_layout)
-
-        lbl_graph_title = QLabel("TEMPERATURE EVOLUTION (5-DAY TREND OUTLOOK)")
-        lbl_graph_title.setObjectName("SectionTitle")
-        main_layout.addWidget(lbl_graph_title)
-
         self.chart_view = QChartView()
         self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.chart_view.setStyleSheet("""
-            background-color: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 12px;
-        """)
-        main_layout.addWidget(self.chart_view, stretch=1)
+        self.chart_view.setStyleSheet("background-color: transparent;")
+        main_layout.addWidget(self.chart_view)
+        self.combo_district.currentIndexChanged.connect(self.__atualizar_combo_cidades)
+        btn_get_weather.clicked.connect(self.update_weather)
+        self.__atualizar_combo_cidades(0)
 
-        self.update_weather()
-
-    def carregar_ficheiro_json(self, caminho):
+    def __carregar_ficheiro_json(self, caminho):
         try:
             with open(caminho, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
+            print(f"[ERRO] Falha ao ler {caminho}: {e}")
             return []
 
-    def atualizar_combo_cidades(self, index):
+    def __atualizar_combo_cidades(self, index):
         self.combo_city.clear()
-        dist_code = self.combo_district.itemData(index)
-
-        for m in self.municipios_dados:
-            if m.get("district_code") == dist_code:
-                self.combo_city.addItem(m["name"], userData=m["code"])
+        if index < 0 or index >= len(self.__distritos_dados):
+            return
+        distrito_selecionado = self.__distritos_dados[index]
+        codigo_distrito = distrito_selecionado["code"]
+        for mun in self.__municipios_dados:
+            if mun["district_code"] == codigo_distrito:
+                self.combo_city.addItem(mun["name"], mun["code"])
 
     def update_weather(self):
-        mun_code = self.combo_city.currentData()
-        mun_name = self.combo_city.currentText()
-
-        if not mun_code:
-            return
-
-        # Limpar os cartões antigos da interface
         while self.cards_layout.count():
-            child = self.cards_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        url = "https://api.ptdata.org/v1/weather/forecasts"
-        dias_unicos = {}
-
-        mun_name_norm = mun_name.strip().lower()
-        dist_code_norm = str(mun_code)[:2]
-
-        print(f"A procurar até 3 dias de previsão para {mun_name}...")
-
-        # 1. Definir os 3 dias que vamos pedir à API segundo a documentação
-        hoje = datetime.now()
-        depois_de_amanha = (hoje + timedelta(days=2)).strftime("%Y-%m-%d")
-
-        datas_pesquisa = ["today", "tomorrow", depois_de_amanha]
-
-        # 2. Fazer um pedido individual para cada dia
-        for data_param in datas_pesquisa:
-            try:
-                # Usar os parâmetros documentados pela API: 'date' e 'district'
-                resposta = requests.get(url, params={"date": data_param, "district": dist_code_norm})
-                resposta.raise_for_status()
-
-                dados_completos = resposta.json()
-                lista_previsoes = dados_completos.get("data", {}).get("forecasts", [])
-
-                if not lista_previsoes:
-                    continue
-
-                previsao_escolhida = None
-
-                # Tentativa 1: Como só há 35 cidades, procuramos o nome exato
-                for p in lista_previsoes:
-                    loc_name = str(p.get("location_name", "")).strip().lower()
-                    if loc_name == mun_name_norm:
-                        previsao_escolhida = p
-                        break
-
-                # Tentativa 2: Se a nossa cidade não for uma das 35, usamos os dados do Distrito (fallback)
-                if not previsao_escolhida:
-                    for p in lista_previsoes:
-                        d_code = str(p.get("district_code", "")).zfill(2)
-                        if d_code == dist_code_norm:
-                            previsao_escolhida = p
-                            break
-
-                # Se encontrámos dados, guardamos para desenhar o cartão
-                if previsao_escolhida:
-                    dt_prev = previsao_escolhida.get("forecast_date")
-                    if not dt_prev:  # Se a API falhar em devolver a data, geramos nós
-                        if data_param == "today":
-                            dt_prev = hoje.strftime("%Y-%m-%d")
-                        elif data_param == "tomorrow":
-                            dt_prev = (hoje + timedelta(days=1)).strftime("%Y-%m-%d")
-                        else:
-                            dt_prev = data_param
-
-                    if dt_prev not in dias_unicos:
-                        dias_unicos[dt_prev] = previsao_escolhida
-
-            except Exception as e:
-                print(f"\033[91m[ERRO] Falha ao ligar à API para o dia '{data_param}': {e}\033[00m")
-
-        # 3. Se a API não devolver nada de todo
-        if not dias_unicos:
-            lbl_erro = QLabel(f"⚠️ A API não possui dados metereológicos para {mun_name}.")
-            lbl_erro.setStyleSheet("color: #f87171; font-size: 14px;")
-            self.cards_layout.addWidget(lbl_erro)
+            item = self.cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        id_global_cidade = self.combo_city.currentData()
+        if not id_global_cidade:
             return
-
+        token_distrito = id_global_cidade[:2]
+        base_api_url = f"https://api.ptdata.org/v1/weather/forecast/daily/{token_distrito}/{id_global_cidade}"
+        hoje = datetime.now()
+        amanha = hoje + timedelta(days=1)
+        depois_amanha = ServerTime = hoje + timedelta(days=2)
+        rotulos_dias = ["Hoje", "Amanhã", depois_amanha.strftime("%A")]
+        datas_alvo = [hoje.strftime("%Y-%m-%d"), amanha.strftime("%Y-%m-%d"), depois_amanha.strftime("%Y-%m-%d")]
         dados_grafico_high = []
         dados_grafico_low = []
         eixo_x_labels = []
-
-        previsoes = list(dias_unicos.values())
-        previsoes.sort(key=lambda x: x.get("forecast_date", ""))
-
-        for i, dia in enumerate(previsoes):
-            dt_str = dia.get("forecast_date", "")
+        for i in range(3):
+            dia_str = rotulos_dias[i]
+            data_iso = datas_alvo[i]
             try:
-                dt = datetime.strptime(dt_str, "%Y-%m-%d")
-                nome_dia = dt.strftime("%A")[:3].title()
-                data_str_fmt = dt.strftime("%d %b").title()
-            except ValueError:
-                nome_dia = f"Dia {i + 1}"
-                data_str_fmt = dt_str
-
-            condicao = dia.get("weather_desc", "N/A")
-            desc_lower = condicao.lower()
-            if "chuva" in desc_lower or "aguaceiro" in desc_lower:
-                emoji = "🌧️"
-            elif "nublado" in desc_lower or "nuvens" in desc_lower:
-                emoji = "🌥️"
-            elif "sol" in desc_lower or "limpo" in desc_lower:
+                resposta = requests.get(base_api_url, params={"date": data_iso}, timeout=10)
+                resposta.raise_for_status()
+                bloco_resposta = resposta.json()
+                previsao = bloco_resposta.get("data", {}).get("forecast", {})
+                if not previsao:
+                    continue
+                t_max = float(previsao.get("tMax", 0))
+                t_min = float(previsao.get("tMin", 0))
+                t_med = float(previsao.get("tMed", t_min))
+                velocidade_vento = previsao.get("classWindSpeed", "N/D")
+                prob_precip = previsao.get("precipitaProb", "0")
+                descricao = previsao.get("description", "Sem dados")
                 emoji = "☀️"
-            else:
-                emoji = "🌤️"
-
-            temp_max_val = dia.get("t_max", 0)
-            temp_min_val = dia.get("t_min", 0)
-
-            try:
-                t_max_float = float(temp_max_val)
-            except (ValueError, TypeError):
-                t_max_float = 0.0
-
-            try:
-                t_min_float = float(temp_min_val)
-            except (ValueError, TypeError):
-                t_min_float = 0.0
-
-            temp_max = str(int(t_max_float))
-            temp_min = str(int(t_min_float))
-            temp_atual = temp_max
-
-            dir_vento = dia.get("wind_dir", "")
-            vento = dir_vento if dir_vento and dir_vento.lower() != "string" else "N/A"
-
-            prob_precip = dia.get("precip_prob", 0)
-            precipitacao = f"{prob_precip}%"
-
-            cartao = WeatherCard(nome_dia, data_str_fmt, condicao, emoji, temp_atual, temp_max, temp_min, vento,
-                                 precipitacao)
-            self.cards_layout.addWidget(cartao)
-
-            dados_grafico_high.append(t_max_float)
-            dados_grafico_low.append(t_min_float)
-            eixo_x_labels.append(nome_dia)
-
-        # 4. Atualizar o Gráfico
-        chart = QChart()
-        chart.setBackgroundVisible(False)
-        chart.legend().hide()
-
-        high_series = QSplineSeries()
-        low_series = QSplineSeries()
-
-        if len(dados_grafico_high) == 1:
-            dados_grafico_high.append(dados_grafico_high[0])
-            dados_grafico_low.append(dados_grafico_low[0])
-            eixo_x_labels.append("...")
-
-        for i in range(len(dados_grafico_high)):
-            high_series.append(QPointF(i, dados_grafico_high[i]))
-            low_series.append(QPointF(i, dados_grafico_low[i]))
-
-        high_series.setColor(QColor("#f87171"))
-        high_series.setPointsVisible(True)
-        low_series.setColor(QColor("#60a5fa"))
-        low_series.setPointsVisible(True)
-
-        chart.addSeries(high_series)
-        chart.addSeries(low_series)
-
-        axis_x = QCategoryAxis()
-        for i in range(len(eixo_x_labels)):
-            axis_x.append(eixo_x_labels[i], i)
-
-        axis_x.setLabelsColor(QColor("#94a3b8"))
-        axis_x.setLinePenColor(QColor("#334155"))
-        axis_x.setGridLineVisible(False)
-        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        high_series.attachAxis(axis_x)
-        low_series.attachAxis(axis_x)
-
-        axis_y = QValueAxis()
-        if dados_grafico_low and dados_grafico_high:
-            min_y = min(dados_grafico_low) - 5
-            max_y = max(dados_grafico_high) + 5
-            if min_y >= max_y:
-                min_y -= 5
-                max_y += 5
+                desc_lower = descricao.lower()
+                if "chuva" in desc_lower or "aguaceiros" in desc_lower:
+                    emoji = "🌧️"
+                elif "nuvens" in desc_lower or "nublado" in desc_lower:
+                    emoji = "☁️"
+                elif "parcialmente" in desc_lower:
+                    emoji = "⛅"
+                data_formatada = datetime.strptime(data_iso, "%Y-%m-%d").strftime("%d %b")
+                card = WeatherCard(
+                    day_name=dia_str,
+                    date_str=data_formatada,
+                    condition=descricao,
+                    emoji=emoji,
+                    current_temp=str(int(t_med)),
+                    high_temp=str(int(t_max)),
+                    low_temp=str(int(t_min)),
+                    wind=str(velocidade_vento),
+                    precip=str(prob_precip)
+                )
+                self.cards_layout.addWidget(card)
+                dados_grafico_high.append(t_max)
+                dados_grafico_low.append(t_min)
+                eixo_x_labels.append(f"{dia_str} ({data_formatada})")
+            except Exception as e:
+                print(f"Erro ao obter dados para {data_iso}: {e}")
+        if dados_grafico_high:
+            chart = QChart()
+            chart.setTitle("Tendência de Temperaturas (Próximos 3 Dias)")
+            chart.setTitleFont(QFont("Arial", 11, QFont.Weight.Bold))
+            chart.setTitleBrush(QColor("#f8fafc"))
+            chart.setBackgroundBrush(QColor("#1e293b"))
+            chart.setPlotAreaBackgroundVisible(True)
+            chart.setPlotAreaBackgroundBrush(QColor("#111827"))
+            high_series = QSplineSeries()
+            high_series.setName("Temperatura Máxima")
+            low_series = QSplineSeries()
+            low_series.setName("Temperatura Mínima")
+            for idx in range(len(dados_grafico_high)):
+                high_series.append(QPointF(idx, dados_grafico_high[idx]))
+                low_series.append(QPointF(idx, dados_grafico_low[idx]))
+            high_series.setColor(QColor("#f87171"))
+            high_series.setPointsVisible(True)
+            low_series.setColor(QColor("#60a5fa"))
+            low_series.setPointsVisible(True)
+            chart.addSeries(high_series)
+            chart.addSeries(low_series)
+            axis_x = QCategoryAxis()
+            for idx in range(len(eixo_x_labels)):
+                axis_x.append(eixo_x_labels[idx], idx)
+            axis_x.setLabelsColor(QColor("#94a3b8"))
+            axis_x.setLinePenColor(QColor("#334155"))
+            axis_x.setGridLineVisible(False)
+            chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+            high_series.attachAxis(axis_x)
+            low_series.attachAxis(axis_x)
+            axis_y = QValueAxis()
+            min_y = min(dados_grafico_low) - 3
+            max_y = max(dados_grafico_high) + 3
             axis_y.setRange(min_y, max_y)
+            axis_y.setLabelFormat("%d°C")
+            axis_y.setLabelsColor(QColor("#94a3b8"))
+            axis_y.setLinePenColor(QColor("#334155"))
+            axis_y.setGridLinePen(QColor("#334155"))
+            chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+            high_series.attachAxis(axis_y)
+            low_series.attachAxis(axis_y)
+            self.chart_view.setChart(chart)
 
-        axis_y.setLabelFormat("%d°C")
-        axis_y.setLabelsColor(QColor("#94a3b8"))
-        axis_y.setLinePenColor(QColor("#334155"))
-        axis_y.setGridLinePen(QColor("#1e293b"))
-        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        high_series.attachAxis(axis_y)
-        low_series.attachAxis(axis_y)
-
-        self.chart_view.setChart(chart)
-
-        
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setFont(QFont("Segoe UI", 10))
     window = DistrictWeatherApp()
     window.show()
     sys.exit(app.exec())
