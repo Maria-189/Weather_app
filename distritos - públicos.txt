@@ -1,8 +1,0 @@
-distritos - públicos
-municipalidades - públicos
-tempo - privado
-Região administrativa - classe mãe(provisório)
-
-
-link - https://api.ptdata.org/docs#tag/Weather
-https://api.ptdata.org/v1/weather/forecasts
